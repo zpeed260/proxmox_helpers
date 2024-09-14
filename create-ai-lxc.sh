@@ -53,18 +53,26 @@ check_ct_exists() {
     fi
 }
 
+# Function to retrieve volume group dynamically
+get_vgname() {
+    local storage_name=$1
+    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}' | sed 's/:$//')
+    if [[ -z "$vgname" ]]; then
+        msg_error "Unable to find VG for storage: $storage_name"
+        exit 1
+    fi
+    echo "$vgname"
+}
+
 # Check available free space in the LVM group or thin pool
 check_lvm_space() {
     local VG=$1
     local REQUIRED_SPACE=$2
     local LVTYPE=$3
 
-    # Check space based on LVM type
     if [ "$LVTYPE" == "thin" ]; then
-        # For LVM-thin, check the thin pool size
         local FREE_SPACE=$(lvs --noheadings -o size,free --units G | grep "$VG" | awk '{print $2}' | sed 's/G//')
     else
-        # For traditional LVM, check the volume group free space
         local FREE_SPACE=$(vgs --noheadings -o vg_free --units G | grep "$VG" | sed 's/G//')
     fi
 
@@ -91,11 +99,9 @@ create_lxc_container() {
     local STORAGE=$6
     local BRIDGE=$7
     local NET_CONFIG=$8
-    local VG="pve" # Change if you're using a different volume group
 
     msg_info "Creating LXC container with ID $CTID..."
 
-    # Ensure the rootfs storage uses the correct format STORAGE:SIZE
     retry_command pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst \
         --hostname $HOSTNAME --memory $MEMORY --cores $CORES \
         --rootfs ${STORAGE}:${DISK_SIZE} --net0 name=eth0,bridge=$BRIDGE,$NET_CONFIG --features nesting=1 --unprivileged 1
@@ -122,6 +128,8 @@ main() {
     local BRIDGE=$(prompt_for_input "Enter network bridge" "vmbr0")
     local NET_CONFIG=$(prompt_for_input "Enter network configuration (e.g., ip=dhcp)" "ip=dhcp")
     local LVTYPE="thin" # Set to "lvm" if you're not using LVM-thin
+
+    local VG=$(get_vgname "$STORAGE")
 
     # Check available free space before proceeding
     check_lvm_space "$VG" "$DISK_SIZE" "$LVTYPE"

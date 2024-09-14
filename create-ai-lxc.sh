@@ -53,10 +53,10 @@ check_ct_exists() {
     fi
 }
 
-# Function to retrieve volume group dynamically
+# Function to retrieve volume group dynamically based on the storage ID
 get_vgname() {
     local storage_name=$1
-    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}' | sed 's/:$//')
+    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}')
     if [[ -z "$vgname" ]]; then
         msg_error "Unable to find VG for storage: $storage_name"
         exit 1

@@ -59,7 +59,7 @@ create_lxc_container() {
     msg_info "Creating LXC container with ID $CTID..."
     retry_command pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst \
         --hostname $HOSTNAME --storage $STORAGE --memory $MEMORY --cores $CORES \
-        --rootfs $DISK_SIZE --net0 name=eth0,bridge=$BRIDGE,$NET_CONFIG --features nesting=1 --unprivileged 1
+        --rootfs $STORAGE:$DISK_SIZE --net0 name=eth0,bridge=$BRIDGE,$NET_CONFIG --features nesting=1 --unprivileged 1
     msg_ok "LXC container $CTID created successfully."
 }
 

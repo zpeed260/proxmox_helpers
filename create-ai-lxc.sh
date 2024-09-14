@@ -29,41 +29,32 @@ retry_command() {
     fi
 }
 
-# Check if container ID already exists
-check_ct_exists() {
-    if pct list | grep -qw "^$1"; then
-        msg_error "Container ID $1 already exists!"
-        exit 1
-    fi
-}
-
-# Download LXC template if necessary
-download_template() {
-    msg_info "Downloading Ubuntu LXC template..."
-    retry_command pveam update
-    retry_command pveam download local ubuntu-22.04-standard_22.04-1_amd64.tar.zst
-    msg_ok "Template downloaded."
-}
-
-# Check available free space in the storage volume
-check_free_space() {
-    local STORAGE=$1
+# Check available free space in the LVM group or thin pool
+check_lvm_space() {
+    local VG=$1
     local REQUIRED_SPACE=$2
+    local LVTYPE=$3
 
-    # Get available space in the storage pool
-    local FREE_SPACE=$(pvesm status | awk -v storage="$STORAGE" '$1 == storage {print $6}' | sed 's/G//')
+    # Check space based on LVM type
+    if [ "$LVTYPE" == "thin" ]; then
+        # For LVM-thin, check the thin pool size
+        local FREE_SPACE=$(lvs --noheadings -o size,free --units G | grep "$VG" | awk '{print $2}' | sed 's/G//')
+    else
+        # For traditional LVM, check the volume group free space
+        local FREE_SPACE=$(vgs --noheadings -o vg_free --units G | grep "$VG" | sed 's/G//')
+    fi
 
     if [[ -z "$FREE_SPACE" ]]; then
-        msg_error "Unable to retrieve available space for storage $STORAGE."
+        msg_error "Unable to retrieve available space for VG $VG."
         exit 1
     fi
 
     if (( $(echo "$REQUIRED_SPACE > $FREE_SPACE" | bc -l) )); then
-        msg_error "Requested disk size (${REQUIRED_SPACE}G) exceeds available space (${FREE_SPACE}G) in storage $STORAGE."
+        msg_error "Requested disk size (${REQUIRED_SPACE}G) exceeds available space (${FREE_SPACE}G) in VG $VG."
         exit 1
     fi
 
-    msg_ok "Sufficient free space (${FREE_SPACE}G) available in storage $STORAGE."
+    msg_ok "Sufficient free space (${FREE_SPACE}G) available in VG $VG."
 }
 
 # Create LXC container with given configuration
@@ -76,6 +67,7 @@ create_lxc_container() {
     local STORAGE=$6
     local BRIDGE=$7
     local NET_CONFIG=$8
+    local VG="pve" # Change if you're using a different volume group
 
     msg_info "Creating LXC container with ID $CTID..."
 
@@ -92,39 +84,12 @@ create_lxc_container() {
     msg_ok "LXC container $CTID created successfully."
 }
 
-# Start the created LXC container
-start_lxc_container() {
-    local CTID=$1
-    msg_info "Starting LXC container $CTID..."
-    retry_command pct start $CTID
-    msg_ok "LXC container $CTID started successfully."
-}
-
-# Install Docker inside the LXC container
-install_docker() {
-    local CTID=$1
-    msg_info "Installing Docker inside LXC container $CTID..."
-    retry_command pct exec $CTID -- bash -c "apt update && apt upgrade -y && apt install -y apt-transport-https ca-certificates curl software-properties-common"
-    retry_command pct exec $CTID -- bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -"
-    retry_command pct exec $CTID -- bash -c "add-apt-repository 'deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable'"
-    retry_command pct exec $CTID -- bash -c "apt update && apt install -y docker-ce docker-compose"
-    msg_ok "Docker installed successfully inside LXC $CTID."
-}
-
-# Prompt user for input with default value handling
-prompt_for_input() {
-    local prompt_message="$1"
-    local default_value="$2"
-    local user_input
-    read -p "$prompt_message ($default_value): " user_input
-    echo "${user_input:-$default_value}"
-}
-
-# Get the next available LXC container ID
-get_next_lxc_id() {
-    local last_id=$(pct list | awk 'NR>1 {print $1}' | sort -n | tail -n 1)
-    local next_id=$((last_id + 1))
-    echo "$next_id"
+# Check if container ID already exists
+check_ct_exists() {
+    if pct list | grep -qw "^$1"; then
+        msg_error "Container ID $1 already exists!"
+        exit 1
+    fi
 }
 
 # Main execution flow
@@ -140,21 +105,13 @@ main() {
     local STORAGE=$(prompt_for_input "Enter storage location" "local-lvm")
     local BRIDGE=$(prompt_for_input "Enter network bridge" "vmbr0")
     local NET_CONFIG=$(prompt_for_input "Enter network configuration (e.g., ip=dhcp)" "ip=dhcp")
+    local LVTYPE="thin" # Set to "lvm" if you're not using LVM-thin
 
     # Check available free space before proceeding
-    check_free_space "$STORAGE" "$DISK_SIZE"
-
-    # Download the template if not available
-    download_template
+    check_lvm_space "$VG" "$DISK_SIZE" "$LVTYPE"
 
     # Create the LXC container
     create_lxc_container "$CTID" "$HOSTNAME" "$MEMORY" "$CORES" "$DISK_SIZE" "$STORAGE" "$BRIDGE" "$NET_CONFIG"
-
-    # Start the container
-    start_lxc_container "$CTID"
-
-    # Install Docker inside the container
-    install_docker "$CTID"
 }
 
 # Run the main function

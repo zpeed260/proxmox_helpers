@@ -29,6 +29,30 @@ retry_command() {
     fi
 }
 
+# Function to prompt user for input with default value handling
+prompt_for_input() {
+    local prompt_message="$1"
+    local default_value="$2"
+    local user_input
+    read -p "$prompt_message ($default_value): " user_input
+    echo "${user_input:-$default_value}"
+}
+
+# Function to get the next available LXC container ID
+get_next_lxc_id() {
+    local last_id=$(pct list | awk 'NR>1 {print $1}' | sort -n | tail -n 1)
+    local next_id=$((last_id + 1))
+    echo "$next_id"
+}
+
+# Check if container ID already exists
+check_ct_exists() {
+    if pct list | grep -qw "^$1"; then
+        msg_error "Container ID $1 already exists!"
+        exit 1
+    fi
+}
+
 # Check available free space in the LVM group or thin pool
 check_lvm_space() {
     local VG=$1
@@ -82,14 +106,6 @@ create_lxc_container() {
     fi
 
     msg_ok "LXC container $CTID created successfully."
-}
-
-# Check if container ID already exists
-check_ct_exists() {
-    if pct list | grep -qw "^$1"; then
-        msg_error "Container ID $1 already exists!"
-        exit 1
-    fi
 }
 
 # Main execution flow

@@ -45,6 +45,27 @@ download_template() {
     msg_ok "Template downloaded."
 }
 
+# Check available free space in the storage volume
+check_free_space() {
+    local STORAGE=$1
+    local REQUIRED_SPACE=$2
+
+    # Get available space in the storage pool
+    local FREE_SPACE=$(pvesm status | awk -v storage="$STORAGE" '$1 == storage {print $6}' | sed 's/G//')
+
+    if [[ -z "$FREE_SPACE" ]]; then
+        msg_error "Unable to retrieve available space for storage $STORAGE."
+        exit 1
+    fi
+
+    if (( $(echo "$REQUIRED_SPACE > $FREE_SPACE" | bc -l) )); then
+        msg_error "Requested disk size (${REQUIRED_SPACE}G) exceeds available space (${FREE_SPACE}G) in storage $STORAGE."
+        exit 1
+    fi
+
+    msg_ok "Sufficient free space (${FREE_SPACE}G) available in storage $STORAGE."
+}
+
 # Create LXC container with given configuration
 create_lxc_container() {
     local CTID=$1
@@ -119,6 +140,9 @@ main() {
     local STORAGE=$(prompt_for_input "Enter storage location" "local-lvm")
     local BRIDGE=$(prompt_for_input "Enter network bridge" "vmbr0")
     local NET_CONFIG=$(prompt_for_input "Enter network configuration (e.g., ip=dhcp)" "ip=dhcp")
+
+    # Check available free space before proceeding
+    check_free_space "$STORAGE" "$DISK_SIZE"
 
     # Download the template if not available
     download_template

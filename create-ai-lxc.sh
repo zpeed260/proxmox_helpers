@@ -111,6 +111,24 @@ get_next_lxc_id() {
     echo "$next_id"
 }
 
+# Retry function to handle retries for container operations
+retry_command() {
+    local retries=5
+    local delay=5
+    local success=0
+
+    for ((i=0; i<$retries; i++)); do
+        "$@" && success=1 && break
+        echo "Retry $((i + 1))/$retries failed. Retrying in $delay seconds..."
+        sleep $delay
+    done
+
+    if [[ $success -eq 0 ]]; then
+        echo "Error: Command failed after $retries attempts."
+        exit 1
+    fi
+}
+
 # Get the next available LXC container ID
 CTID=$(get_next_lxc_id)
 
@@ -181,7 +199,12 @@ fi
 
 # Create the LXC container
 echo "Creating LXC container..."
-pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst --storage $STORAGE --hostname $HOSTNAME --rootfs $DISK_SIZE --memory $MEMORY --cores $CORES --net0 name=eth0,bridge=$BRIDGE,$NET_CONFIG --features nesting=1 --unprivileged 1
+retry_command pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst --storage $STORAGE --hostname $HOSTNAME --rootfs $DISK_SIZE --memory $MEMORY --cores $CORES --net0 name=eth0,bridge=$BRIDGE,$NET_CONFIG --features nesting=1 --unprivileged 1
+sleep 5
+
+# Start the LXC container
+echo "Starting LXC container $CTID..."
+retry_command pct start $CTID
+sleep 5
 
 # Further steps go here...
-

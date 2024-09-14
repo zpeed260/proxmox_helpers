@@ -44,18 +44,31 @@ check_ct_exists() {
     fi
 }
 
-# Create LXC container with Proxmox defaults
+# Function to retrieve volume group dynamically based on the storage ID
+get_vgname() {
+    local storage_name=$1
+    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}')
+    if [[ -z "$vgname" ]]; then
+        msg_error "Unable to find VG for storage: $storage_name"
+        exit 1
+    fi
+    echo "$vgname"
+}
+
+# Create LXC container with minimal settings and verify storage pool
 create_lxc_container() {
     local CTID=$1
     local MEMORY=4096  # 4GB RAM
     local CORES=4      # 4 CPU cores
     local DISK_SIZE=16G
-    local STORAGE="local-lvm"
+
+    # Get available storage from Proxmox
+    local STORAGE=$(pvesm status | awk 'NR==2 {print $1}') # Use the first available storage
     local HOSTNAME="ai-lxc-${CTID}"
     local BRIDGE="vmbr0"
     local NET_CONFIG="ip=dhcp"
 
-    msg_info "Creating LXC container with ID $CTID..."
+    msg_info "Creating LXC container with ID $CTID using storage $STORAGE..."
 
     retry_command pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst \
         --hostname $HOSTNAME --memory $MEMORY --cores $CORES \

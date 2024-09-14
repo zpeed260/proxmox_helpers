@@ -29,15 +29,6 @@ retry_command() {
     fi
 }
 
-# Function to prompt user for input with default value handling
-prompt_for_input() {
-    local prompt_message="$1"
-    local default_value="$2"
-    local user_input
-    read -p "$prompt_message ($default_value): " user_input
-    echo "${user_input:-$default_value}"
-}
-
 # Function to get the next available LXC container ID
 get_next_lxc_id() {
     local last_id=$(pct list | awk 'NR>1 {print $1}' | sort -n | tail -n 1)
@@ -64,41 +55,16 @@ get_vgname() {
     echo "$vgname"
 }
 
-# Check available free space in the LVM group or thin pool
-check_lvm_space() {
-    local VG=$1
-    local REQUIRED_SPACE=$2
-    local LVTYPE=$3
-
-    if [ "$LVTYPE" == "thin" ]; then
-        local FREE_SPACE=$(lvs --noheadings -o size,free --units G | grep "$VG" | awk '{print $2}' | sed 's/G//')
-    else
-        local FREE_SPACE=$(vgs --noheadings -o vg_free --units G | grep "$VG" | sed 's/G//')
-    fi
-
-    if [[ -z "$FREE_SPACE" ]]; then
-        msg_error "Unable to retrieve available space for VG $VG."
-        exit 1
-    fi
-
-    if (( $(echo "$REQUIRED_SPACE > $FREE_SPACE" | bc -l) )); then
-        msg_error "Requested disk size (${REQUIRED_SPACE}G) exceeds available space (${FREE_SPACE}G) in VG $VG."
-        exit 1
-    fi
-
-    msg_ok "Sufficient free space (${FREE_SPACE}G) available in VG $VG."
-}
-
 # Create LXC container with given configuration
 create_lxc_container() {
     local CTID=$1
-    local HOSTNAME=$2
-    local MEMORY=$3
-    local CORES=$4
-    local DISK_SIZE=$5
-    local STORAGE=$6
-    local BRIDGE=$7
-    local NET_CONFIG=$8
+    local MEMORY=4096  # 4GB RAM
+    local CORES=4      # 4 CPU cores
+    local DISK_SIZE=16G
+    local STORAGE="local-lvm"
+    local HOSTNAME="ai-lxc-${CTID}"
+    local BRIDGE="vmbr0"
+    local NET_CONFIG="ip=dhcp"
 
     msg_info "Creating LXC container with ID $CTID..."
 
@@ -114,28 +80,72 @@ create_lxc_container() {
     msg_ok "LXC container $CTID created successfully."
 }
 
+# Install Docker and Docker Compose inside the LXC container
+install_docker_in_lxc() {
+    local CTID=$1
+    msg_info "Installing Docker inside LXC $CTID..."
+
+    retry_command pct exec $CTID -- bash -c "apt update && apt upgrade -y"
+    retry_command pct exec $CTID -- bash -c "apt install -y apt-transport-https ca-certificates curl software-properties-common"
+    retry_command pct exec $CTID -- bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -"
+    retry_command pct exec $CTID -- bash -c "add-apt-repository 'deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable'"
+    retry_command pct exec $CTID -- bash -c "apt update && apt install -y docker-ce docker-compose"
+    
+    msg_ok "Docker installed successfully inside LXC $CTID."
+}
+
+# Setup Docker Compose for Double Take and CompreFace
+setup_doubletake_compreface() {
+    local CTID=$1
+    msg_info "Setting up Docker Compose for Double Take and CompreFace inside LXC $CTID..."
+
+    retry_command pct exec $CTID -- bash -c "mkdir -p /opt/double-take"
+    retry_command pct exec $CTID -- bash -c "mkdir -p /opt/compreface"
+
+    # Create Docker Compose for Double Take and CompreFace
+    pct exec $CTID -- bash -c 'cat <<EOF > /opt/double-take/docker-compose.yml
+version: "3"
+services:
+  double-take:
+    container_name: double-take
+    image: jakowenko/double-take
+    ports:
+      - 3000:3000
+    volumes:
+      - ./config:/app/config
+    restart: always
+
+  compreface:
+    container_name: compreface
+    image: exadel/compreface
+    ports:
+      - 8000:80
+    restart: always
+EOF'
+
+    # Start Docker Compose
+    retry_command pct exec $CTID -- bash -c "cd /opt/double-take && docker-compose up -d"
+
+    msg_ok "Double Take and CompreFace setup completed inside LXC $CTID."
+}
+
 # Main execution flow
 main() {
     local CTID=$(get_next_lxc_id)
-    CTID=$(prompt_for_input "Enter LXC container ID" "$CTID")
+
+    # Ensure the container ID does not exist
     check_ct_exists "$CTID"
 
-    local HOSTNAME=$(prompt_for_input "Enter LXC hostname" "ai-lxc")
-    local MEMORY=$(prompt_for_input "Enter memory allocation in MB" "4096")
-    local DISK_SIZE=$(prompt_for_input "Enter disk size (e.g., 16G)" "16G")
-    local CORES=$(prompt_for_input "Enter number of CPU cores" "4")
-    local STORAGE=$(prompt_for_input "Enter storage location" "local-lvm")
-    local BRIDGE=$(prompt_for_input "Enter network bridge" "vmbr0")
-    local NET_CONFIG=$(prompt_for_input "Enter network configuration (e.g., ip=dhcp)" "ip=dhcp")
-    local LVTYPE="thin" # Set to "lvm" if you're not using LVM-thin
-
-    local VG=$(get_vgname "$STORAGE")
-
-    # Check available free space before proceeding
-    check_lvm_space "$VG" "$DISK_SIZE" "$LVTYPE"
-
     # Create the LXC container
-    create_lxc_container "$CTID" "$HOSTNAME" "$MEMORY" "$CORES" "$DISK_SIZE" "$STORAGE" "$BRIDGE" "$NET_CONFIG"
+    create_lxc_container "$CTID"
+
+    # Install Docker inside the container
+    install_docker_in_lxc "$CTID"
+
+    # Setup Double Take and CompreFace inside the container
+    setup_doubletake_compreface "$CTID"
+
+    msg_ok "LXC container with ID $CTID has been set up with Double Take and CompreFace!"
 }
 
 # Run the main function

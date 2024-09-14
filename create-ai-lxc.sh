@@ -44,18 +44,7 @@ check_ct_exists() {
     fi
 }
 
-# Function to retrieve volume group dynamically based on the storage ID
-get_vgname() {
-    local storage_name=$1
-    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}')
-    if [[ -z "$vgname" ]]; then
-        msg_error "Unable to find VG for storage: $storage_name"
-        exit 1
-    fi
-    echo "$vgname"
-}
-
-# Create LXC container with given configuration
+# Create LXC container with Proxmox defaults
 create_lxc_container() {
     local CTID=$1
     local MEMORY=4096  # 4GB RAM

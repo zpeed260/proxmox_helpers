@@ -44,31 +44,27 @@ check_ct_exists() {
     fi
 }
 
-# Function to retrieve volume group dynamically based on the storage ID
-get_vgname() {
-    local storage_name=$1
-    local vgname=$(pvesm status | awk -v storage="$storage_name" '$1 == storage {print $1}')
-    if [[ -z "$vgname" ]]; then
-        msg_error "Unable to find VG for storage: $storage_name"
-        exit 1
-    fi
-    echo "$vgname"
+# List available storage options and let the user select
+select_storage() {
+    local storages=$(pvesm status | awk 'NR>1 {print $1}')
+    echo "Available storage options:"
+    echo "$storages"
+    read -p "Enter the storage to use for the LXC container (e.g., local-lvm, data): " selected_storage
+    echo "$selected_storage"
 }
 
-# Create LXC container with minimal settings and verify storage pool
+# Create LXC container with default settings
 create_lxc_container() {
     local CTID=$1
     local MEMORY=4096  # 4GB RAM
     local CORES=4      # 4 CPU cores
     local DISK_SIZE=16G
-
-    # Get available storage from Proxmox
-    local STORAGE=$(pvesm status | awk 'NR==2 {print $1}') # Use the first available storage
+    local STORAGE=$2
     local HOSTNAME="ai-lxc-${CTID}"
     local BRIDGE="vmbr0"
     local NET_CONFIG="ip=dhcp"
 
-    msg_info "Creating LXC container with ID $CTID using storage $STORAGE..."
+    msg_info "Creating LXC container with ID $CTID on storage $STORAGE..."
 
     retry_command pct create $CTID local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst \
         --hostname $HOSTNAME --memory $MEMORY --cores $CORES \
@@ -79,7 +75,7 @@ create_lxc_container() {
         exit 1
     fi
 
-    msg_ok "LXC container $CTID created successfully."
+    msg_ok "LXC container $CTID created successfully on storage $STORAGE."
 }
 
 # Install Docker and Docker Compose inside the LXC container
@@ -138,8 +134,11 @@ main() {
     # Ensure the container ID does not exist
     check_ct_exists "$CTID"
 
+    # Select storage option
+    local STORAGE=$(select_storage)
+
     # Create the LXC container
-    create_lxc_container "$CTID"
+    create_lxc_container "$CTID" "$STORAGE"
 
     # Install Docker inside the container
     install_docker_in_lxc "$CTID"
@@ -147,7 +146,7 @@ main() {
     # Setup Double Take and CompreFace inside the container
     setup_doubletake_compreface "$CTID"
 
-    msg_ok "LXC container with ID $CTID has been set up with Double Take and CompreFace!"
+    msg_ok "LXC container with ID $CTID has been set up with Double Take and CompreFace on storage $STORAGE!"
 }
 
 # Run the main function

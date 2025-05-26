@@ -523,7 +523,10 @@ cat << 'BANNER'
 ║                 Production Deployment                        ║
 ╚═══════════════════════════════════════════════════════════════╝
 BANNER
-EOF
 
 main
 SCRIPT_END
+
+# Make executable and run
+chmod +x /root/deploy-ceo-investment.sh
+/root/deploy-ceo-investment.sh

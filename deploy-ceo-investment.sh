@@ -523,6 +523,7 @@ cat << 'BANNER'
 ║                 Production Deployment                        ║
 ╚═══════════════════════════════════════════════════════════════╝
 BANNER
+EOF
 
 main
 SCRIPT_END
